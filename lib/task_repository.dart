@@ -11,11 +11,7 @@ class Task {
     required this.priority,
   });
 }
+
 class TaskRepository {
-  static List<Task> tasks = [
-    Task(title: "Zrobic zakupy", deadline:"dzisiaj", done: false, priority: "sredni"),
-    Task(title: "Umyc samochod", deadline:"jutro", done: true, priority: "niski"),
-    Task(title: "Przeczytac rozdzial 4",deadline: "czwartek", done: false,priority: "wysoki"),
-    Task(title: "Napisac maila",deadline: "piatek", done: true,priority: "sredni"),
-  ];
+  static List<Task> tasks = [];
 }
