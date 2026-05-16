@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart';
+import 'dart:math';
 import 'task_repository.dart';
-import 'task_api_service.dart';
+import 'task_local_database.dart';
+import 'task_sync_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Hive.initFlutter();
+  await Hive.openBox("tasks");
+
   runApp(MyApp());
 }
 
@@ -30,10 +37,14 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    tasksFuture = TaskApiService.fetchTasks().then((pobraneZadania) {
-      TaskRepository.tasks = pobraneZadania;
-      return pobraneZadania;
-    });
+    tasksFuture = loadTasks();
+  }
+
+  Future<List<Task>> loadTasks() async {
+    await TaskSyncService.loadInitialDataIfNeeded();
+    final lokalneZadania = TaskLocalDatabase.getTasks();
+    TaskRepository.tasks = lokalneZadania;
+    return lokalneZadania;
   }
 
   @override
@@ -57,9 +68,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: Text("Anuluj"),
                       ),
                       TextButton(
-                        onPressed: () {
+                        onPressed: () async {
+                          await TaskLocalDatabase.deleteAllTasks();
                           setState(() {
-                            TaskRepository.tasks.clear();
+                            tasksFuture = loadTasks();
                           });
                           Navigator.pop(context);
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -81,8 +93,7 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return Center(child: CircularProgressIndicator());
-          }
-          else if (snapshot.hasError) {
+          } else if (snapshot.hasError) {
             return Center(child: Text("Błąd: ${snapshot.error}"));
           }
 
@@ -150,10 +161,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     itemBuilder: (context, index) {
                       final task = filteredTasks[index];
                       return Dismissible(
-                        key: ValueKey(task.title + index.toString()),
-                        onDismissed: (direction) {
+                        key: ValueKey(task.id.toString() + index.toString()),
+                        onDismissed: (direction) async {
+                          await TaskLocalDatabase.deleteTask(task.id);
                           setState(() {
-                            TaskRepository.tasks.remove(task);
+                            tasksFuture = loadTasks();
                           });
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(content: Text("Zadanie usuniete")),
@@ -163,9 +175,11 @@ class _HomeScreenState extends State<HomeScreen> {
                           title: task.title,
                           subtitle: "termin: ${task.deadline} | priorytet: ${task.priority}",
                           done: task.done,
-                          onChanged: (value) {
+                          onChanged: (value) async {
+                            task.done = value ?? false;
+                            await TaskLocalDatabase.updateTask(task);
                             setState(() {
-                              task.done = value!;
+                              tasksFuture = loadTasks();
                             });
                           },
                           onTap: () async {
@@ -177,11 +191,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             );
 
                             if (updatedTask != null) {
+                              await TaskLocalDatabase.updateTask(updatedTask);
                               setState(() {
-                                int i = TaskRepository.tasks.indexOf(task);
-                                if(i != -1) {
-                                  TaskRepository.tasks[i] = updatedTask;
-                                }
+                                tasksFuture = loadTasks();
                               });
                             }
                           },
@@ -197,7 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
-          final Task? newTask = await Navigator.push(
+          final Task? newTaskFromScreen = await Navigator.push(
             context,
             PageRouteBuilder(
               pageBuilder: (context, animation, secondaryAnimation) => AddTaskScreen(),
@@ -210,9 +222,17 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           );
 
-          if (newTask!=null) {
+          if (newTaskFromScreen != null) {
+            final taskToSave = Task(
+              id: Random().nextInt(1000000),
+              title: newTaskFromScreen.title,
+              deadline: newTaskFromScreen.deadline,
+              priority: newTaskFromScreen.priority,
+              done: newTaskFromScreen.done,
+            );
+            await TaskLocalDatabase.addTask(taskToSave);
             setState(() {
-              TaskRepository.tasks.add(newTask);
+              tasksFuture = loadTasks();
             });
           }
         },
@@ -225,9 +245,9 @@ class _HomeScreenState extends State<HomeScreen> {
 class AddTaskScreen extends StatelessWidget {
   AddTaskScreen({super.key});
 
-  final TextEditingController titleController= TextEditingController();
-  final TextEditingController deadlineController =TextEditingController();
-  final TextEditingController priorityController=TextEditingController();
+  final TextEditingController titleController = TextEditingController();
+  final TextEditingController deadlineController = TextEditingController();
+  final TextEditingController priorityController = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
@@ -241,9 +261,9 @@ class AddTaskScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             TextField(
-              controller:titleController,
+              controller: titleController,
               decoration: InputDecoration(
-                labelText:"Tytul zadania",
+                labelText: "Tytul zadania",
                 border: OutlineInputBorder(),
               ),
             ),
@@ -251,7 +271,7 @@ class AddTaskScreen extends StatelessWidget {
             TextField(
               controller: deadlineController,
               decoration: InputDecoration(
-                labelText:"Termin",
+                labelText: "Termin",
                 border: OutlineInputBorder(),
               ),
             ),
@@ -267,6 +287,7 @@ class AddTaskScreen extends StatelessWidget {
             ElevatedButton(
               onPressed: () {
                 final newTask = Task(
+                  id: 0,
                   title: titleController.text,
                   deadline: deadlineController.text,
                   priority: priorityController.text,
@@ -330,6 +351,7 @@ class EditTaskScreen extends StatelessWidget {
             ElevatedButton(
               onPressed: () {
                 final updatedTask = Task(
+                  id: task.id,
                   title: titleController.text,
                   deadline: deadlineController.text,
                   priority: priorityController.text,
